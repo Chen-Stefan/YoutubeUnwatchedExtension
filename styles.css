@@ -1,0 +1,21 @@
+.yt-unwatched-filter-button {
+    background-color: transparent;
+    border: none;
+    cursor: pointer;
+    font-family: "Roboto", "Arial", sans-serif;
+    font-size: 14px;
+    padding: 10px 16px;
+    border-radius: 18px;
+    margin: 0 4px;
+    color: #0f0f0f;
+    transition: background-color 0.2s;
+}
+
+.yt-unwatched-filter-button:hover {
+    background-color: rgba(0, 0, 0, 0.1);
+}
+
+.yt-unwatched-filter-button.active {
+    background-color: #0f0f0f;
+    color: #fff;
+}
