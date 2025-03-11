@@ -4,6 +4,7 @@ let attemptCount = 0;
 const MAX_ATTEMPTS = 15;
 let refilterTimeout = null;
 let processingMutations = false;
+let globalFilterEnabled = true; // Default to enabled
 
 // Tab specific state
 const tabStates = {
@@ -47,8 +48,30 @@ if (localStorage.getItem('yt-unwatched-initialized') !== 'true') {
 
 // DOM Ready handler
 document.readyState === 'loading'
-    ? document.addEventListener('DOMContentLoaded', init)
-    : init();
+    ? document.addEventListener('DOMContentLoaded', checkGlobalStateAndInit)
+    : checkGlobalStateAndInit();
+
+function checkGlobalStateAndInit() {
+    chrome.storage.local.get(['globalFilterEnabled'], (result) => {
+        // Set the global state variable
+        globalFilterEnabled = result.globalFilterEnabled !== undefined ? result.globalFilterEnabled : true;
+        console.log("YouTube Unwatched: Global filter state:", globalFilterEnabled);
+
+        // Only initialize if global filtering is enabled
+        if (globalFilterEnabled) {
+            init();
+        } else {
+            console.log("YouTube Unwatched: Global filtering is disabled, extension inactive");
+
+            // If the button exists but global filtering is disabled, remove it
+            const button = document.querySelector('#unwatched-filter-button');
+            if (button) {
+                button.remove();
+                buttonAdded = false;
+            }
+        }
+    });
+}
 
 function init() {
     console.log("YouTube Unwatched: Initializing");
@@ -128,6 +151,12 @@ function getCurrentTab() {
 
 // Button management
 function addFilterButton(tabType) {
+    // If global filtering is disabled, don't add the button
+    if (!globalFilterEnabled) {
+        console.log("YouTube Unwatched: Global filtering disabled, not adding button");
+        return;
+    }
+
     if (buttonAdded || attemptCount >= MAX_ATTEMPTS) return;
     attemptCount++;
 
@@ -335,8 +364,8 @@ function setupNavigationListener() {
             // Remove existing button
             document.getElementById('unwatched-filter-button')?.remove();
 
-            // If on a relevant page, add button for new tab
-            if (isRelevantChannelPage()) {
+            // If global filtering is enabled and on a relevant page, add button for new tab
+            if (globalFilterEnabled && isRelevantChannelPage()) {
                 const currentTab = getCurrentTab();
                 if (currentTab) {
                     setTimeout(() => {
@@ -360,7 +389,8 @@ function setupNavigationListener() {
 function setupContentObservers() {
     // Observe DOM changes
     const contentObserver = new MutationObserver(debounce(mutations => {
-        if (!isRelevantChannelPage()) {
+        // If global filtering is disabled or not on a relevant page, remove button
+        if (!globalFilterEnabled || !isRelevantChannelPage()) {
             document.getElementById('unwatched-filter-button')?.remove();
             buttonAdded = false;
             return;
@@ -383,9 +413,44 @@ function setupContentObservers() {
 
     // Also handle scroll events
     window.addEventListener('scroll', debounce(() => {
-        const currentTab = getCurrentTab();
-        if (currentTab && tabStates[currentTab].active) {
-            filterContent(currentTab);
+        if (globalFilterEnabled) {
+            const currentTab = getCurrentTab();
+            if (currentTab && tabStates[currentTab].active) {
+                filterContent(currentTab);
+            }
         }
     }, 300));
 }
+
+// Listen for messages from popup
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    if (message.action === 'updateGlobalState') {
+        console.log("YouTube Unwatched: Received global state update:", message.enabled);
+        globalFilterEnabled = message.enabled;
+
+        if (globalFilterEnabled) {
+            // Re-initialize if we're turning on
+            if (isRelevantChannelPage()) {
+                const currentTab = getCurrentTab();
+                if (currentTab) {
+                    buttonAdded = false;
+                    attemptCount = 0;
+                    addFilterButton(currentTab);
+                }
+            }
+        } else {
+            // Remove button if we're turning off
+            const button = document.querySelector('#unwatched-filter-button');
+            if (button) {
+                button.remove();
+                buttonAdded = false;
+            }
+
+            // Show all content in case filtering was active
+            const currentTab = getCurrentTab();
+            if (currentTab && tabStates[currentTab].active) {
+                showAllContent(currentTab);
+            }
+        }
+    }
+});

@@ -9,7 +9,8 @@ A simple Chrome extension that helps you hide watched videos, live streams, and 
 - Separately filters watched content in "Videos", "Live", and "Shorts" tabs
 - Filter state for each tab is saved individually
 - Automatically adapts to YouTube's dynamically loaded content
-- Supports filtering newly loaded videos when scrolling
+- Global toggle in popup menu to enable/disable the entire extension
+
 
 ## How to Use
 
