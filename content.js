@@ -1,9 +1,7 @@
-// content.js - Updated to only show the button on channel pages with Videos/Shorts/Live tabs
-
 // Global state
 let buttonAdded = false;
 let attemptCount = 0;
-const MAX_ATTEMPTS = 20;
+const MAX_ATTEMPTS = 15;
 let refilterTimeout = null;
 let processingMutations = false;
 
@@ -14,21 +12,15 @@ const tabStates = {
     live: { active: false, key: 'yt-unwatched-live-active' }
 };
 
-// Helper function - get tab type from path
-function getTabFromPath(path) {
-    if (path.includes('/shorts')) {
-        return 'shorts';
-    } else if (path.includes('/streams') || path.includes('/live')) {
-        return 'live';
-    } else if (path.includes('/videos')) {
-        return 'videos';
-    }
-
+// Helper functions
+const getTabFromPath = path => {
+    if (path.includes('/shorts')) return 'shorts';
+    if (path.includes('/streams') || path.includes('/live')) return 'live';
+    if (path.includes('/videos')) return 'videos';
     return null;
-}
+};
 
-// Helper function - debounce
-function debounce(func, delay) {
+const debounce = (func, delay) => {
     let timeout;
     return function () {
         const context = this;
@@ -36,716 +28,280 @@ function debounce(func, delay) {
         clearTimeout(timeout);
         timeout = setTimeout(() => func.apply(context, args), delay);
     };
-}
+};
 
-// Remove any problematic saved states (for fresh install)
+// Reset all states to default (OFF)
 function resetStoredStates() {
-    // Clear any existing states that might be causing problems
-    localStorage.removeItem(tabStates.videos.key);
-    localStorage.removeItem(tabStates.shorts.key);
-    localStorage.removeItem(tabStates.live.key);
-
-    // Set defaults explicitly
-    localStorage.setItem(tabStates.videos.key, 'false');
-    localStorage.setItem(tabStates.shorts.key, 'false');
-    localStorage.setItem(tabStates.live.key, 'false');
-
-    console.log("YouTube Unwatched: Reset all stored states to OFF");
+    Object.entries(tabStates).forEach(([key, tab]) => {
+        localStorage.setItem(tab.key, 'false');
+        tab.active = false;
+    });
+    console.log("YouTube Unwatched: Reset all states to OFF");
 }
 
-// For first-time installations, reset any stored states
+// Initialization
 if (localStorage.getItem('yt-unwatched-initialized') !== 'true') {
     resetStoredStates();
     localStorage.setItem('yt-unwatched-initialized', 'true');
 }
 
-// Run when DOM is ready
-if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', init);
-} else {
-    // Already loaded
-    init();
-}
+// DOM Ready handler
+document.readyState === 'loading'
+    ? document.addEventListener('DOMContentLoaded', init)
+    : init();
 
-// Main function to run after page load
 function init() {
-    console.log("YouTube Unwatched: Extension initialized");
+    console.log("YouTube Unwatched: Initializing");
 
-    // 重置所有存储的状态，确保所有按钮默认为红色（过滤关闭）
+    // 重置所有状态，确保按钮默认为红色（过滤关闭）
     resetStoredStates();
 
-    // 加载已保存的状态（现在都会是false/OFF）
-    loadAllTabStates();
+    // 加载状态（现在都是false/OFF）
+    loadTabStates();
 
-    // 检查是否在频道页面上的相关标签页
-    if (isOnRelevantChannelPage()) {
-        console.log("YouTube Unwatched: On a relevant channel page");
+    // 检查是否在频道页面
+    if (isRelevantChannelPage()) {
         const currentTab = getCurrentTab();
-
         if (currentTab) {
-            // 特别处理当前是Live标签页的情况
-            if (currentTab === 'live') {
-                console.log(`YouTube Unwatched: Currently on Live tab, state:`, tabStates.live.active);
-            }
-
-            setTimeout(() => {
-                addFilterButton(currentTab);
-            }, 2000);
+            console.log(`YouTube Unwatched: On ${currentTab} tab`);
+            setTimeout(() => addFilterButton(currentTab), 1000);
         }
-    } else {
-        console.log("YouTube Unwatched: Not on a relevant channel page, button will not be added");
     }
 
-    // Set up navigation listener for SPA
-    listenForNavigation();
+    // 设置导航监听
+    setupNavigationListener();
 
-    // Set up scroll and mutation observers for dynamic content loading
-    setupDynamicContentObservers();
+    // 设置内容观察器
+    setupContentObservers();
 }
 
-// Check if we're on a channel page with Videos, Shorts, or Live tabs
-function isOnRelevantChannelPage() {
-    const url = window.location.href;
-
-    // First check if we're on a channel page
-    const isChannelPage = url.includes('/channel/') ||
-        url.includes('/c/') ||
-        url.includes('/user/') ||
-        url.includes('/@');
-
-    if (!isChannelPage) {
-        console.log("YouTube Unwatched: Not on a channel page");
-        return false;
-    }
-
-    // Now check if we're on a relevant tab
-    const isVideosTab = url.includes('/videos');
-    const isShortsTab = url.includes('/shorts');
-    const isLiveTab = url.includes('/streams') || url.includes('/live');
-
-    const isRelevantTab = isVideosTab || isShortsTab || isLiveTab;
-
-    if (!isRelevantTab) {
-        console.log("YouTube Unwatched: On channel page but not on Videos/Shorts/Live tab");
-    }
-
-    return isRelevantTab;
-}
-
-// Load saved states for all tabs
-function loadAllTabStates() {
-    // 添加调试信息来查看实际的本地存储值
-    console.log("YouTube Unwatched: Raw localStorage values:", {
-        videos: localStorage.getItem(tabStates.videos.key),
-        shorts: localStorage.getItem(tabStates.shorts.key),
-        live: localStorage.getItem(tabStates.live.key)
+// State management
+function loadTabStates() {
+    // Load states from localStorage
+    Object.entries(tabStates).forEach(([tabName, tabState]) => {
+        const savedState = localStorage.getItem(tabState.key);
+        tabState.active = savedState === 'true';
     });
 
-    // Load Videos state - default to FALSE if not set or null
-    const videosState = localStorage.getItem(tabStates.videos.key);
-    tabStates.videos.active = videosState === 'true'; // This will be false for null, undefined, or any value other than 'true'
-
-    // Load Shorts state - default to FALSE if not set or null
-    const shortsState = localStorage.getItem(tabStates.shorts.key);
-    tabStates.shorts.active = shortsState === 'true';
-
-    // Load Live state - default to FALSE if not set or null
-    const liveState = localStorage.getItem(tabStates.live.key);
-    tabStates.live.active = liveState === 'true';
-
-    console.log("YouTube Unwatched: Loaded saved states:", {
+    console.log("YouTube Unwatched: Loaded states:", {
         videos: tabStates.videos.active,
         shorts: tabStates.shorts.active,
         live: tabStates.live.active
     });
-
-    // Initialize localStorage with default values if not set
-    if (videosState === null) {
-        localStorage.setItem(tabStates.videos.key, 'false');
-    }
-    if (shortsState === null) {
-        localStorage.setItem(tabStates.shorts.key, 'false');
-    }
-    if (liveState === null) {
-        localStorage.setItem(tabStates.live.key, 'false');
-    }
-
-    // 如果shorts标签页的状态错误地被设为true，强制修正为false
-    if (tabStates.shorts.active === true) {
-        console.log("YouTube Unwatched: Correcting shorts tab state from ON to OFF");
-        tabStates.shorts.active = false;
-        localStorage.setItem(tabStates.shorts.key, 'false');
-    }
 }
 
-// Get the current tab type from URL and DOM elements
+// Page detection - check if we're on a channel page with relevant tabs
+function isRelevantChannelPage() {
+    const url = window.location.href;
+
+    // Check if on a channel page
+    const isChannel = /\/channel\/|\/c\/|\/user\/|\/@/.test(url);
+
+    // Check if on a relevant tab
+    const hasRelevantTab = /\/videos|\/shorts|\/streams|\/live/.test(url);
+
+    return isChannel && hasRelevantTab;
+}
+
+// Tab detection - determine which tab we're currently on
 function getCurrentTab() {
-    // 添加更详细的日志
-    console.log("YouTube Unwatched: Detecting current tab from", window.location.pathname);
-
+    // First check URL path (most reliable)
     const path = window.location.pathname;
+    if (path.includes('/shorts')) return 'shorts';
+    if (path.includes('/streams') || path.includes('/live')) return 'live';
+    if (path.includes('/videos')) return 'videos';
 
-    // 首先通过URL路径来确定标签类型（最可靠的方法）
-    if (path.includes('/shorts')) {
-        console.log("YouTube Unwatched: Detected Shorts tab from URL path");
-        return 'shorts';
-    } else if (path.includes('/streams') || path.includes('/live')) {
-        console.log("YouTube Unwatched: Detected Live tab from URL path");
-        return 'live';
-    } else if (path.includes('/videos')) {
-        console.log("YouTube Unwatched: Detected Videos tab from URL path");
-        return 'videos';
+    // Fallback to DOM-based detection
+    const activeTab = document.querySelector('[aria-selected="true"]')?.textContent?.toLowerCase();
+    if (activeTab) {
+        if (activeTab.includes('shorts')) return 'shorts';
+        if (activeTab.includes('live') || activeTab.includes('stream')) return 'live';
+        if (activeTab.includes('video')) return 'videos';
     }
 
-    // 如果无法从URL确定，检查DOM元素特征
-    console.log("YouTube Unwatched: URL path did not conclusively identify tab, checking DOM elements");
+    // If all else fails, check for specific content
+    if (document.querySelector('ytd-reel-shelf-renderer')) return 'shorts';
+    if (document.querySelector('ytd-channel-video-player-renderer')) return 'live';
 
-    // 检查页面标题或面包屑导航中的标签指示器
-    const pageTitle = document.title || '';
-    if (pageTitle.includes('Shorts')) {
-        console.log("YouTube Unwatched: Detected Shorts tab from page title");
-        return 'shorts';
-    } else if (pageTitle.includes('Live') || pageTitle.includes('Streams')) {
-        console.log("YouTube Unwatched: Detected Live tab from page title");
-        return 'live';
-    }
-
-    // 检查导航标签的激活状态
-    const tabElements = document.querySelectorAll('paper-tab, tp-yt-paper-tab');
-    for (const tab of tabElements) {
-        const tabText = tab.textContent.trim().toLowerCase();
-        const isSelected = tab.getAttribute('aria-selected') === 'true' ||
-            tab.classList.contains('iron-selected') ||
-            tab.classList.contains('selected');
-
-        if (isSelected) {
-            console.log(`YouTube Unwatched: Found selected tab with text: ${tabText}`);
-            if (tabText.includes('shorts')) {
-                return 'shorts';
-            } else if (tabText.includes('live') || tabText.includes('stream')) {
-                return 'live';
-            } else if (tabText.includes('video')) {
-                return 'videos';
-            }
-        }
-    }
-
-    // 最后一种检测方法：查找特定的页面元素
-    if (document.querySelector('ytd-reel-shelf-renderer') || document.querySelector('ytd-shorts')) {
-        console.log("YouTube Unwatched: Detected Shorts tab from shorts-specific elements");
-        return 'shorts';
-    } else if (document.querySelector('ytd-channel-video-player-renderer')) {
-        console.log("YouTube Unwatched: Detected Live tab from live-specific elements");
-        return 'live';
-    }
-
-    console.log("YouTube Unwatched: Unable to determine current tab, defaulting to Videos");
-    return 'videos'; // 默认假设是Videos标签
+    return 'videos'; // Default fallback
 }
 
-// Get current tab state
-function getCurrentState() {
-    const tab = getCurrentTab();
-    return tab ? tabStates[tab].active : false;
-}
-
-// Get button label based on tab type and state
-function getButtonLabel(tabType, isActive) {
-    let tabLabel = tabType.charAt(0).toUpperCase() + tabType.slice(1); // Capitalize first letter
-
-    return isActive ?
-        `Hide Watched ${tabLabel} ON` :
-        `Hide Watched ${tabLabel} OFF`;
-}
-
-// Add filter button for specific tab
+// Button management
 function addFilterButton(tabType) {
     if (buttonAdded || attemptCount >= MAX_ATTEMPTS) return;
-
-    console.log(`YouTube Unwatched: Attempt ${attemptCount + 1} to add button for ${tabType} tab`);
     attemptCount++;
 
-    // Check if we're on a relevant channel page before adding the button
-    if (!isOnRelevantChannelPage()) {
-        console.log("YouTube Unwatched: Not on a relevant channel page, button will not be added");
-        return;
-    }
+    console.log(`YouTube Unwatched: Adding button for ${tabType} tab (attempt ${attemptCount})`);
 
     // Check if button already exists
-    if (document.querySelector('#unwatched-filter-button')) {
+    const existingBtn = document.getElementById('unwatched-filter-button');
+    if (existingBtn) {
         console.log("YouTube Unwatched: Button already exists");
         buttonAdded = true;
-
-        // Update the button appearance to match current state
         updateButtonAppearance(tabType);
         return;
     }
 
-    // 特别针对Shorts标签页，确保状态正确
-    if (tabType === 'shorts' && tabStates.shorts.active === true) {
-        console.log("YouTube Unwatched: Correcting shorts tab state in addFilterButton");
-        tabStates.shorts.active = false;
-        localStorage.setItem(tabStates.shorts.key, 'false');
-    }
-
     try {
-        // Create our button
-        const filterButton = document.createElement('button');
-        filterButton.id = 'unwatched-filter-button';
+        // Create button with improved styling
+        const btn = document.createElement('button');
+        btn.id = 'unwatched-filter-button';
 
-        // Style the button
-        filterButton.style.position = 'fixed';  // Fixed position so it stays visible
-        filterButton.style.top = '120px';       // Position below the channel header
-        filterButton.style.right = '20px';      // Align to right side
-        filterButton.style.padding = '10px 20px';
-        filterButton.style.borderRadius = '20px';
-        filterButton.style.border = 'none';
-        filterButton.style.cursor = 'pointer';
-        filterButton.style.fontWeight = 'bold';
-        filterButton.style.fontSize = '14px';
-        filterButton.style.boxShadow = '0 2px 5px rgba(0,0,0,0.2)';
-        filterButton.style.zIndex = '9999';     // Ensure it's on top
+        // Apply styles
+        Object.assign(btn.style, {
+            position: 'fixed',
+            top: '120px',
+            right: '20px',
+            padding: '10px 20px',
+            borderRadius: '20px',
+            border: 'none',
+            cursor: 'pointer',
+            fontWeight: 'bold',
+            fontSize: '14px',
+            boxShadow: '0 2px 5px rgba(0,0,0,0.2)',
+            zIndex: '9999',
+            backgroundColor: '#ff0000' // Default to red (OFF)
+        });
 
-        // Set button text based on tab and state
-        const isActive = tabStates[tabType].active;
-        filterButton.textContent = getButtonLabel(tabType, isActive);
+        // Set text content and data attributes
+        btn.textContent = getButtonLabel(tabType, tabStates[tabType].active);
+        btn.dataset.tabType = tabType;
 
-        // Set initial appearance based on current state
-        if (isActive) {
-            filterButton.style.backgroundColor = '#00cc00';
-        } else {
-            filterButton.style.backgroundColor = '#ff0000';
-        }
+        // Add click handler
+        btn.addEventListener('click', () => toggleFilter(tabType));
 
-        // Add click handler for the specific tab
-        filterButton.addEventListener('click', () => toggleFilter(tabType));
-
-        // Add to document body
-        document.body.appendChild(filterButton);
-
-        console.log(`YouTube Unwatched: Button successfully added for ${tabType}, initial state:`, tabStates[tabType].active);
+        // Add to document
+        document.body.appendChild(btn);
         buttonAdded = true;
 
-        // Store the current tab type as a data attribute for validation
-        filterButton.dataset.tabType = tabType;
-
-        // If we were previously filtering, reapply the filter
-        if (tabStates[tabType].active) {
-            setTimeout(() => filterUnwatchedContent(tabType), 500);
-        }
+        console.log(`YouTube Unwatched: Button added for ${tabType} tab`);
     } catch (e) {
         console.error("YouTube Unwatched: Error adding button:", e);
+        // Retry after short delay
         setTimeout(() => addFilterButton(tabType), 1000);
     }
 }
 
-// Update button appearance to match current tab state
+// Get button label based on tab and state
+function getButtonLabel(tabType, isActive) {
+    const tabName = tabType.charAt(0).toUpperCase() + tabType.slice(1);
+    return `Hide Watched ${tabName} ${isActive ? 'ON' : 'OFF'}`;
+}
+
+// Update button appearance to match state
 function updateButtonAppearance(tabType) {
-    const button = document.querySelector('#unwatched-filter-button');
-    if (!button) return;
+    const btn = document.getElementById('unwatched-filter-button');
+    if (!btn) return;
 
-    // 再次验证当前标签类型，确保使用正确的标签
-    const currentTabFromPath = getCurrentTab();
-    if (currentTabFromPath && currentTabFromPath !== tabType) {
-        console.log(`YouTube Unwatched: Correcting tab type in updateButtonAppearance from ${tabType} to ${currentTabFromPath}`);
-        tabType = currentTabFromPath;
+    // Check for correct tab type
+    const currentTab = getCurrentTab();
+    if (currentTab && currentTab !== tabType) {
+        console.log(`YouTube Unwatched: Correcting tab type from ${tabType} to ${currentTab}`);
+        tabType = currentTab;
     }
 
-    // Update the tab type data attribute
-    button.dataset.tabType = tabType;
+    // Update button text and data attribute
+    btn.textContent = getButtonLabel(tabType, tabStates[tabType].active);
+    btn.dataset.tabType = tabType;
 
-    // Get the active state for this tab
-    const isActive = tabStates[tabType].active;
+    // Update button color
+    btn.style.backgroundColor = tabStates[tabType].active ? '#00cc00' : '#ff0000';
 
-    // Update button text with new naming scheme
-    button.textContent = getButtonLabel(tabType, isActive);
-
-    // Update button appearance
-    if (isActive) {
-        button.style.backgroundColor = '#00cc00';
-        console.log(`YouTube Unwatched: Button updated to GREEN (ON) for ${tabType}`);
-    } else {
-        button.style.backgroundColor = '#ff0000';
-        console.log(`YouTube Unwatched: Button updated to RED (OFF) for ${tabType}`);
-    }
-
-    console.log(`YouTube Unwatched: Button appearance updated for ${tabType}, state:`, tabStates[tabType].active);
+    console.log(`YouTube Unwatched: Button updated for ${tabType}, state: ${tabStates[tabType].active}`);
 }
 
-// Toggle filtering function for specific tab
+// Toggle filtering for the current tab
 function toggleFilter(tabType) {
-    console.log(`YouTube Unwatched: Toggle filter clicked for ${tabType}, current state:`, tabStates[tabType].active);
-
-    // 获取当前正确的标签类型（防止错误的标签被传递）
-    const currentTabFromPath = getCurrentTab();
-    if (currentTabFromPath && currentTabFromPath !== tabType) {
-        console.log(`YouTube Unwatched: Correcting tab type from ${tabType} to ${currentTabFromPath}`);
-        tabType = currentTabFromPath;
+    // Check for correct tab type
+    const currentTab = getCurrentTab();
+    if (currentTab && currentTab !== tabType) {
+        console.log(`YouTube Unwatched: Correcting tab type from ${tabType} to ${currentTab}`);
+        tabType = currentTab;
     }
 
-    // Toggle the active state for this tab
+    // Toggle the state
     tabStates[tabType].active = !tabStates[tabType].active;
+    localStorage.setItem(tabStates[tabType].key, tabStates[tabType].active.toString());
+    console.log(`YouTube Unwatched: Toggled ${tabType} state to ${tabStates[tabType].active}`);
 
-    console.log(`YouTube Unwatched: New state for ${tabType}:`, tabStates[tabType].active);
+    // Update button and apply filtering
+    updateButtonAppearance(tabType);
 
-    // 强制延迟，确保DOM操作顺序正确
-    setTimeout(() => {
-        if (tabStates[tabType].active) {
-            console.log(`YouTube Unwatched: Filtering unwatched ${tabType}`);
-            filterUnwatchedContent(tabType);
+    if (tabStates[tabType].active) {
+        filterContent(tabType);
+    } else {
+        showAllContent(tabType);
+    }
+}
+
+// Filter out watched content
+function filterContent(tabType) {
+    console.log(`YouTube Unwatched: Filtering ${tabType} content`);
+
+    // Get selectors for the current tab
+    const selectors = getSelectorsForTab(tabType);
+    if (!selectors || selectors.length === 0) return;
+
+    // Find all content items
+    const items = document.querySelectorAll(selectors.join(', '));
+    console.log(`YouTube Unwatched: Found ${items.length} items to filter`);
+
+    let hiddenCount = 0;
+
+    // Process each item
+    items.forEach(item => {
+        const isWatched = checkWatchedStatus(item, tabType);
+        if (isWatched) {
+            item.style.display = 'none';
+            hiddenCount++;
         } else {
-            console.log(`YouTube Unwatched: Showing all ${tabType}`);
-            showAllContent(tabType);
+            item.style.display = '';
         }
-
-        // Update button appearance
-        updateButtonAppearance(tabType);
-
-        // Store the filter state for this tab
-        localStorage.setItem(tabStates[tabType].key, tabStates[tabType].active.toString());
-        console.log(`YouTube Unwatched: Filter state saved for ${tabType}:`, tabStates[tabType].active);
-    }, 50);
-}
-
-// Filter out watched content based on tab type
-function filterUnwatchedContent(tabType) {
-    // Cancel any pending refilter operations
-    if (refilterTimeout) {
-        clearTimeout(refilterTimeout);
-        refilterTimeout = null;
-    }
-
-    try {
-        // 再次验证当前标签类型，确保使用正确的标签
-        const currentTabFromPath = getCurrentTab();
-        if (currentTabFromPath && currentTabFromPath !== tabType) {
-            console.log(`YouTube Unwatched: Correcting tab type in filterUnwatchedContent from ${tabType} to ${currentTabFromPath}`);
-            tabType = currentTabFromPath;
-        }
-
-        // 确保按钮状态与过滤状态一致
-        const button = document.querySelector('#unwatched-filter-button');
-        if (button) {
-            // 确保当前标签的状态是true
-            if (!tabStates[tabType].active) {
-                console.log(`YouTube Unwatched: Fixing inconsistent filter state for ${tabType}`);
-                tabStates[tabType].active = true;
-                localStorage.setItem(tabStates[tabType].key, 'true');
-
-                // 更新按钮显示
-                updateButtonAppearance(tabType);
-            }
-        }
-
-        // Different selectors for different tab types
-        const selectors = getSelectorsForTab(tabType);
-
-        console.log(`YouTube Unwatched: Filtering content on ${tabType} tab using selectors:`, selectors);
-
-        const contentItems = document.querySelectorAll(selectors.join(', '));
-        console.log(`YouTube Unwatched: Found ${contentItems.length} items to filter on ${tabType} tab`);
-
-        let hiddenCount = 0;
-
-        // Loop through content
-        contentItems.forEach(item => {
-            // Use the appropriate check function based on tab type
-            let isWatched = false;
-
-            if (tabType === 'live') {
-                isWatched = isLiveStreamWatched(item);
-            } else if (tabType === 'shorts') {
-                isWatched = isShortWatched(item);
-            } else {
-                isWatched = isVideoWatched(item);
-            }
-
-            if (isWatched) {
-                item.style.display = 'none';
-                hiddenCount++;
-            } else {
-                item.style.display = '';
-            }
-        });
-
-        console.log(`YouTube Unwatched: Hidden ${hiddenCount} watched items out of ${contentItems.length} total on ${tabType} tab`);
-    } catch (e) {
-        console.error(`YouTube Unwatched: Error during filtering on ${tabType} tab:`, e);
-    }
-}
-
-// Check if a video is watched (for Videos tab)
-function isVideoWatched(item) {
-    // Check for any of the progress indicators
-    const progressBar = item.querySelector('#progress');
-    const resumePlayback = item.querySelector('ytd-thumbnail-overlay-resume-playback-renderer');
-
-    // If there's a progress bar with any width, it's watched
-    if (progressBar) {
-        const style = window.getComputedStyle(progressBar);
-        if (parseInt(style.width) > 0) {
-            return true;
-        }
-    }
-
-    // If there's a resume playback overlay, it's watched
-    if (resumePlayback) {
-        return true;
-    }
-
-    return false;
-}
-
-// Check if a short is watched
-function isShortWatched(item) {
-    // For shorts, we need to check for different indicators
-    const progressBar = item.querySelector('#progress');
-    const watchedIndicator = item.querySelector('.ytd-thumbnail-overlay-resume-playback-renderer');
-
-    // Check if there's a "watched" indicator in the thumbnail
-    if (watchedIndicator) {
-        return true;
-    }
-
-    // Check if it has a progress bar
-    if (progressBar) {
-        const style = window.getComputedStyle(progressBar);
-        if (parseInt(style.width) > 0) {
-            return true;
-        }
-    }
-
-    return false;
-}
-
-// Specialized function to check if a livestream is watched
-function isLiveStreamWatched(item) {
-    // Check for progress indicator
-    const progressBar = item.querySelector('#progress');
-    if (progressBar) {
-        const style = window.getComputedStyle(progressBar);
-        // Only count as watched if there's an actual width
-        if (parseInt(style.width) > 0) {
-            return true;
-        }
-    }
-
-    // Check for a "Watched" badge on livestreams
-    const metadata = item.querySelector('#metadata, #meta');
-    if (metadata) {
-        const watchedText = metadata.textContent.includes('Watched');
-        if (watchedText) {
-            return true;
-        }
-    }
-
-    // Look for "LIVE" badge - if it has a LIVE badge, it's current and not watched
-    const liveBadge = item.querySelector('ytd-thumbnail-overlay-time-status-renderer[overlay-style="LIVE"]');
-    if (liveBadge) {
-        return false; // Current livestreams are not "watched"
-    }
-
-    // If it says "Streamed X time ago" and has a progress indicator, it's watched
-    const hasStreamedText = item.textContent.includes('Streamed ') && progressBar;
-
-    return hasStreamedText && progressBar;
-}
-
-// Show all content for specific tab
-function showAllContent(tabType) {
-    // Cancel any pending refilter operations
-    if (refilterTimeout) {
-        clearTimeout(refilterTimeout);
-        refilterTimeout = null;
-    }
-
-    try {
-        // 再次验证当前标签类型，确保使用正确的标签
-        const currentTabFromPath = getCurrentTab();
-        if (currentTabFromPath && currentTabFromPath !== tabType) {
-            console.log(`YouTube Unwatched: Correcting tab type in showAllContent from ${tabType} to ${currentTabFromPath}`);
-            tabType = currentTabFromPath;
-        }
-
-        // 确保按钮状态与过滤状态一致
-        const button = document.querySelector('#unwatched-filter-button');
-        if (button) {
-            // 确保当前标签的状态是false
-            if (tabStates[tabType].active) {
-                console.log(`YouTube Unwatched: Fixing inconsistent filter OFF state for ${tabType}`);
-                tabStates[tabType].active = false;
-                localStorage.setItem(tabStates[tabType].key, 'false');
-
-                // 更新按钮显示
-                updateButtonAppearance(tabType);
-            }
-        }
-
-        // Different selectors for different tab types
-        const selectors = getSelectorsForTab(tabType);
-
-        console.log(`YouTube Unwatched: Resetting display for all content on ${tabType} tab using selectors:`, selectors);
-
-        // Find all items on the page that match our selectors
-        const items = document.querySelectorAll(selectors.join(', '));
-        console.log(`YouTube Unwatched: Found ${items.length} items to reset`);
-
-        // Reset all display styles to show everything
-        items.forEach(item => {
-            if (item.style.display === 'none') {
-                item.style.display = '';
-                console.log("YouTube Unwatched: Restored hidden item:", item);
-            }
-        });
-
-        // For Live tab, we need an extra comprehensive search
-        if (tabType === 'live') {
-            // Try even broader selectors to make sure we catch everything
-            const contentContainer = document.querySelector('#contents');
-            if (contentContainer) {
-                // Get all potential video items in the container
-                const allItems = contentContainer.querySelectorAll('*');
-                console.log(`YouTube Unwatched: Checking ${allItems.length} potential items in content container`);
-
-                allItems.forEach(item => {
-                    // Only target elements that might be video items
-                    if (item.tagName && item.tagName.toLowerCase().includes('renderer')) {
-                        if (item.style.display === 'none') {
-                            item.style.display = '';
-                            console.log("YouTube Unwatched: Restored hidden item from content container:", item);
-                        }
-                    }
-                });
-            }
-        }
-
-        console.log(`YouTube Unwatched: Reset display of all content on ${tabType} tab`);
-    } catch (e) {
-        console.error(`YouTube Unwatched: Error showing all content on ${tabType} tab:`, e);
-    }
-}
-
-// Set up observers for dynamic content
-function setupDynamicContentObservers() {
-    let contentObserverThrottleTimer = null;
-
-    // Create a mutation observer to watch for new content loaded
-    const contentObserver = new MutationObserver((mutations) => {
-        // Avoid processing mutations too frequently
-        if (processingMutations) return;
-        if (contentObserverThrottleTimer) return;
-
-        contentObserverThrottleTimer = setTimeout(() => {
-            contentObserverThrottleTimer = null;
-
-            // Set processing flag
-            processingMutations = true;
-
-            try {
-                // First check if we're on a relevant channel page
-                if (!isOnRelevantChannelPage()) {
-                    // If button exists but we're not on a relevant page, remove it
-                    const button = document.querySelector('#unwatched-filter-button');
-                    if (button) {
-                        console.log("YouTube Unwatched: Not on a relevant channel page, removing button");
-                        button.remove();
-                        buttonAdded = false;
-                    }
-                    return;
-                }
-
-                // Check if we've changed tabs
-                const currentTab = getCurrentTab();
-                const button = document.querySelector('#unwatched-filter-button');
-
-                // If we have a button and it's showing the wrong tab, update it
-                if (button && button.dataset.tabType !== currentTab && currentTab) {
-                    console.log(`YouTube Unwatched: Tab type mismatch - button shows ${button.dataset.tabType}, but we're on ${currentTab}`);
-                    updateButtonAppearance(currentTab);
-                }
-
-                // Only process if we're on a supported tab and filtering is active for that tab
-                if (currentTab && tabStates[currentTab].active) {
-                    // Check if mutations contain content items
-                    let shouldRefilter = false;
-
-                    for (const mutation of mutations) {
-                        if (mutation.addedNodes.length > 0) {
-                            // Check if any added nodes are or contain video elements
-                            for (const node of mutation.addedNodes) {
-                                if (node.nodeType === 1) { // Element node
-                                    const selectors = getSelectorsForTab(currentTab);
-                                    const hasVideoContent = selectors.some(sel =>
-                                        node.tagName && node.tagName.toLowerCase() === sel.toLowerCase() ||
-                                        (node.querySelector && node.querySelector(sel))
-                                    );
-
-                                    if (hasVideoContent) {
-                                        shouldRefilter = true;
-                                        break;
-                                    }
-                                }
-                            }
-                        }
-
-                        if (shouldRefilter) break;
-                    }
-
-                    // Reapply filter if needed, with throttling
-                    if (shouldRefilter) {
-                        // Cancel any pending refilter operations
-                        if (refilterTimeout) {
-                            clearTimeout(refilterTimeout);
-                        }
-
-                        // Set a new timeout to refilter
-                        refilterTimeout = setTimeout(() => {
-                            console.log(`YouTube Unwatched: New content detected on ${currentTab} tab, reapplying filter`);
-                            filterUnwatchedContent(currentTab);
-                            refilterTimeout = null;
-                        }, 1000);
-                    }
-                }
-
-                // Check if we need to add the button (in case it was removed)
-                if (currentTab && !document.querySelector('#unwatched-filter-button')) {
-                    buttonAdded = false;
-                    addFilterButton(currentTab);
-                }
-            } finally {
-                // Clear processing flag
-                processingMutations = false;
-            }
-        }, 500);
     });
 
-    // Start observing with a delay to let the page settle
-    setTimeout(() => {
-        contentObserver.observe(document.body, {
-            childList: true,
-            subtree: true
-        });
-    }, 3000);
-
-    // Also add a scroll event listener to catch lazy-loaded content
-    window.addEventListener('scroll', debounce(() => {
-        // First check if we're on a relevant channel page
-        if (!isOnRelevantChannelPage()) {
-            return;
-        }
-
-        const currentTab = getCurrentTab();
-        if (currentTab && tabStates[currentTab].active) {
-            // Only refilter if we're not already processing mutations
-            if (!processingMutations && !refilterTimeout) {
-                console.log(`YouTube Unwatched: Scroll detected on ${currentTab} tab, reapplying filter`);
-                filterUnwatchedContent(currentTab);
-            }
-        }
-    }, 500));
+    console.log(`YouTube Unwatched: Hidden ${hiddenCount} of ${items.length} items`);
 }
 
-// Helper function - get selectors for a specific tab
+// Show all content for the tab
+function showAllContent(tabType) {
+    console.log(`YouTube Unwatched: Showing all ${tabType} content`);
+
+    // Get selectors for the current tab
+    const selectors = getSelectorsForTab(tabType);
+    if (!selectors || selectors.length === 0) return;
+
+    // Find all items and reset display
+    const items = document.querySelectorAll(selectors.join(', '));
+    items.forEach(item => {
+        item.style.display = '';
+    });
+
+    console.log(`YouTube Unwatched: Reset display for ${items.length} items`);
+}
+
+// Check if an item is watched
+function checkWatchedStatus(item, tabType) {
+    // Check for progress bar (works for most content)
+    const progress = item.querySelector('#progress');
+    if (progress && window.getComputedStyle(progress).width !== '0px') {
+        return true;
+    }
+
+    // Type-specific checks
+    if (tabType === 'live') {
+        // Look for watched indicator on livestreams
+        return !!item.querySelector('[aria-label="Watched"]') ||
+            item.textContent.includes('Watched');
+    } else if (tabType === 'shorts') {
+        // Special short checks
+        return !!item.querySelector('ytd-thumbnail-overlay-resume-playback-renderer');
+    } else {
+        // Regular video checks
+        return !!item.querySelector('ytd-thumbnail-overlay-resume-playback-renderer');
+    }
+}
+
+// Get selectors for different tab types
 function getSelectorsForTab(tabType) {
     switch (tabType) {
         case 'videos':
@@ -759,92 +315,77 @@ function getSelectorsForTab(tabType) {
     }
 }
 
-// Listen for page navigation
-function listenForNavigation() {
+// Listen for navigation in SPA
+function setupNavigationListener() {
     let previousUrl = window.location.href;
 
-    // Function to handle navigation events
-    const navigationHandler = debounce(() => {
+    // Check for URL and navigation changes
+    const checkNavigation = debounce(() => {
         const currentUrl = window.location.href;
 
         // If URL has changed
         if (currentUrl !== previousUrl) {
-            const previousPath = new URL(previousUrl).pathname;
-            const currentPath = new URL(currentUrl).pathname;
-
-            console.log(`YouTube Unwatched: Navigation detected from ${previousPath} to ${currentPath}`);
+            console.log(`YouTube Unwatched: Navigation from ${previousUrl} to ${currentUrl}`);
             previousUrl = currentUrl;
-
-            // Cancel any pending refilter operations
-            if (refilterTimeout) {
-                clearTimeout(refilterTimeout);
-                refilterTimeout = null;
-            }
-
-            // Check if we're on a relevant channel page
-            const isRelevant = isOnRelevantChannelPage();
-
-            // Remove the old button
-            const button = document.querySelector('#unwatched-filter-button');
-            if (button) {
-                button.remove();
-            }
 
             // Reset button state
             buttonAdded = false;
             attemptCount = 0;
 
-            // If not on a relevant page, don't add the button
-            if (!isRelevant) {
-                console.log("YouTube Unwatched: Not on a relevant channel page after navigation");
-                return;
-            }
+            // Remove existing button
+            document.getElementById('unwatched-filter-button')?.remove();
 
-            // Get the previous and current tab types
-            const previousTab = getTabFromPath(previousPath);
-            const currentTab = getTabFromPath(currentPath);
+            // If on a relevant page, add button for new tab
+            if (isRelevantChannelPage()) {
+                const currentTab = getCurrentTab();
+                if (currentTab) {
+                    setTimeout(() => {
+                        addFilterButton(currentTab);
 
-            // 确保当前状态与localStorage一致（修复可能的不同步）
-            if (currentTab) {
-                const savedState = localStorage.getItem(tabStates[currentTab].key);
-                if (savedState === 'true') {
-                    tabStates[currentTab].active = true;
-                } else if (savedState === 'false') {
-                    tabStates[currentTab].active = false;
+                        // Apply filtering if active for this tab
+                        if (tabStates[currentTab].active) {
+                            setTimeout(() => filterContent(currentTab), 500);
+                        }
+                    }, 1000);
                 }
-                console.log(`YouTube Unwatched: Tab ${currentTab} state loaded from storage:`, tabStates[currentTab].active);
-            }
-
-            // 处理导航到Shorts标签页的情况
-            if (currentTab === 'shorts') {
-                // 确保Shorts标签页的状态是关闭的
-                if (tabStates.shorts.active === true) {
-                    console.log("YouTube Unwatched: Correcting shorts tab state during navigation");
-                    tabStates.shorts.active = false;
-                    localStorage.setItem(tabStates.shorts.key, 'false');
-                }
-            }
-
-            // 修复：确保Live标签页的状态与localStorage同步
-            if (currentTab === 'live') {
-                console.log(`YouTube Unwatched: Synchronizing Live tab state with localStorage: ${tabStates.live.active}`);
-            }
-
-            // If we're on a supported tab, add the appropriate button
-            if (currentTab) {
-                console.log(`YouTube Unwatched: Navigation to ${currentTab} tab detected, state:`, tabStates[currentTab].active);
-                setTimeout(() => {
-                    addFilterButton(currentTab);
-
-                    // Apply filter if it's active for this tab
-                    if (tabStates[currentTab].active) {
-                        setTimeout(() => filterUnwatchedContent(currentTab), 1000);
-                    }
-                }, 2000);
             }
         }
-    });
+    }, 500);
 
-    // Start listening for navigation events
-    navigationHandler();
+    // Check periodically
+    setInterval(checkNavigation, 1000);
+}
+
+// Set up content observers
+function setupContentObservers() {
+    // Observe DOM changes
+    const contentObserver = new MutationObserver(debounce(mutations => {
+        if (!isRelevantChannelPage()) {
+            document.getElementById('unwatched-filter-button')?.remove();
+            buttonAdded = false;
+            return;
+        }
+
+        const currentTab = getCurrentTab();
+        if (currentTab && tabStates[currentTab].active) {
+            filterContent(currentTab);
+        }
+    }, 300));
+
+    // Start observing
+    const container = document.querySelector('ytd-browse[page-subtype="channels"]');
+    if (container) {
+        contentObserver.observe(container, {
+            childList: true,
+            subtree: true
+        });
+    }
+
+    // Also handle scroll events
+    window.addEventListener('scroll', debounce(() => {
+        const currentTab = getCurrentTab();
+        if (currentTab && tabStates[currentTab].active) {
+            filterContent(currentTab);
+        }
+    }, 300));
 }
