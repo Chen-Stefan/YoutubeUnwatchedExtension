@@ -75,14 +75,13 @@ function checkGlobalStateAndInit() {
 
 function init() {
     console.log("YouTube Unwatched: Initializing");
-
-    // 重置所有状态，确保按钮默认为红色（过滤关闭）
+    // Reset all states to ensure button default is red (filtering off)
     resetStoredStates();
 
-    // 加载状态（现在都是false/OFF）
+    // Load states (now they are all false/OFF)
     loadTabStates();
 
-    // 检查是否在频道页面
+    // Check if on a channel page
     if (isRelevantChannelPage()) {
         const currentTab = getCurrentTab();
         if (currentTab) {
@@ -91,10 +90,10 @@ function init() {
         }
     }
 
-    // 设置导航监听
+    // Set up navigation listener
     setupNavigationListener();
 
-    // 设置内容观察器
+    // Set up content observers
     setupContentObservers();
 }
 

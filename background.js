@@ -17,38 +17,3 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         return true; // Required for async sendResponse
     }
 });
-
-// Installation tracking functionality
-
-// Your server endpoint URL
-const TRACKING_SERVER_URL = 'https://your-extension-tracker.herokuapp.com/api/track-install';
-
-// Listen for extension installation
-chrome.runtime.onInstalled.addListener(function (details) {
-    if (details.reason === "install") {
-        console.log('Extension installed!');
-        trackInstallation();
-    }
-});
-
-// Function to send installation data to your tracking server
-function trackInstallation() {
-    fetch(TRACKING_SERVER_URL, {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-            extensionId: chrome.runtime.id,
-            installTime: new Date().toISOString(),
-            userAgent: navigator.userAgent
-        }),
-    })
-        .then(response => response.json())
-        .then(data => {
-            console.log('Installation tracked successfully:', data);
-        })
-        .catch(error => {
-            console.error('Error tracking installation:', error);
-        });
-}

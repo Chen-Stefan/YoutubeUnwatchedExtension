@@ -8,8 +8,7 @@
         "storage"
     ],
     "host_permissions": [
-        "*://*.youtube.com/*",
-        "https://your-extension-tracker.herokuapp.com/*"
+        "*://*.youtube.com/*"
     ],
     "icons": {
         "16": "images/icon16.png",
